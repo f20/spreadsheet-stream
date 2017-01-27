@@ -3,6 +3,8 @@ use strict;
 use warnings;
 use 5.008;
 
+# ABSTRACT: parse XLSX files (DistZilla wants this)
+
 use Archive::Zip;
 use Graphics::ColorUtils 'rgb2hls', 'hls2rgb';
 use Scalar::Util 'openhandle';
