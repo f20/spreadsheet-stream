@@ -44,13 +44,8 @@ Password to use for decrypting encrypted files.
 =cut
 
 sub new {
-    my $class = shift;
-    my (%args) = @_;
-
-    my $self = bless {}, $class;
-    $self->{Password} = $args{Password} if defined $args{Password};
-
-    return $self;
+    my ( $class, %args ) = @_;
+    bless \%args, $class;
 }
 
 =method parse($file, $formatter)
@@ -63,7 +58,8 @@ The C<$formatter> argument is an optional formatter class as described in L<Spre
 =cut
 
 sub parse {
-    my ( $self, $file, $formatter, $sheetCallback ) = @_;
+    my $self = shift;
+    my ( $file, $formatter ) = @_;
 
     my $zip      = Archive::Zip->new;
     my $workbook = Spreadsheet::ParseExcel::Workbook->new;
@@ -103,8 +99,7 @@ sub parse {
 "Argument to 'new' must be a filename, open filehandle, or scalar ref";
     }
 
-    return $self->_parse_workbook( $zip, $workbook, $formatter,
-        $sheetCallback );
+    return $self->_parse_workbook( $zip, $workbook, $formatter );
 }
 
 sub _check_signature {
@@ -130,7 +125,8 @@ sub _check_signature {
 }
 
 sub _parse_workbook {
-    my ( $self, $zip, $workbook, $formatter, $sheetCallback ) = @_;
+    my $self = shift;
+    my ( $zip, $workbook, $formatter ) = @_;
 
     my $files = $self->_extract_files($zip);
 
@@ -177,24 +173,19 @@ sub _parse_workbook {
     # $workbook->{PrintArea} = ...;
     # $workbook->{PrintTitle} = ...;
 
+    my $sheetCounter    = -1;
     my @sheets = map {
         my $idx = $_->att('rels:id');
         if ( $files->{sheets}{$idx} ) {
             my $sheet = Spreadsheet::ParseExcel::Worksheet->new(
                 Name     => $_->att('name'),
                 _Book    => $workbook,
-                _SheetNo => $idx,
+                _SheetNo => ++$sheetCounter,
             );
             $sheet->{SheetHidden} = 1
               if defined $_->att('state')
               and $_->att('state') eq 'hidden';
-            my $cellCallback = $sheetCallback ? $sheetCallback->($sheet) : sub {
-                my ( $row, $col, $cell ) = @_;
-                $sheet->{Cells}[$row][$col] = $cell;
-                return;
-            };
-            $self->_parse_sheet( $sheet, $files->{sheets}{$idx},
-                $cellCallback );
+            $self->_parse_sheet( $sheet, $files->{sheets}{$idx} );
             ($sheet);
         }
         else {
@@ -214,7 +205,7 @@ sub _parse_workbook {
 
 sub _parse_sheet {
     my $self = shift;
-    my ( $sheet, $sheet_file, $cellCallback ) = @_;
+    my ( $sheet, $sheet_file ) = @_;
 
     $sheet->{MinRow}    = 0;
     $sheet->{MinCol}    = 0;
@@ -472,8 +463,15 @@ sub _parse_sheet {
                     $cell->{_Value} = $sheet->{_Book}{FmtClass}
                       ->ValFmt( $cell, $sheet->{_Book} );
                     $cells{"$row;$col"} = $cell;
-                    return $twig->finish_now
-                      if $cellCallback->( $row, $col, $cell );
+                    if ( my $cellHandler = $self->{CellHandler} ) {
+                        return $twig->finish_now
+                          if $cellHandler->(
+                            $sheet->{_Book}, $sheet->{_SheetNo}, $row, $col,
+                            $cell
+                          );
+                    }
+                    $sheet->{Cells}[$row][$col] = $cell
+                      unless $self->{NotSetCell};
                     $col_idx++;
                 }
 
