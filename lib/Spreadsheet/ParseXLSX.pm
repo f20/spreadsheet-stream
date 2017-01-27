@@ -61,8 +61,7 @@ The C<$formatter> argument is an optional formatter class as described in L<Spre
 =cut
 
 sub parse {
-    my $self = shift;
-    my ( $file, $formatter ) = @_;
+    my ( $self, $file, $formatter, $sheetCallback ) = @_;
 
     my $zip      = Archive::Zip->new;
     my $workbook = Spreadsheet::ParseExcel::Workbook->new;
@@ -102,7 +101,8 @@ sub parse {
 "Argument to 'new' must be a filename, open filehandle, or scalar ref";
     }
 
-    return $self->_parse_workbook( $zip, $workbook, $formatter );
+    return $self->_parse_workbook( $zip, $workbook, $formatter,
+        $sheetCallback );
 }
 
 sub _check_signature {
@@ -128,8 +128,7 @@ sub _check_signature {
 }
 
 sub _parse_workbook {
-    my $self = shift;
-    my ( $zip, $workbook, $formatter ) = @_;
+    my ( $self, $zip, $workbook, $formatter, $sheetCallback ) = @_;
 
     my $files = $self->_extract_files($zip);
 
@@ -187,7 +186,13 @@ sub _parse_workbook {
             $sheet->{SheetHidden} = 1
               if defined $_->att('state')
               and $_->att('state') eq 'hidden';
-            $self->_parse_sheet( $sheet, $files->{sheets}{$idx} );
+            my $cellCallback = $sheetCallback ? $sheetCallback->($sheet) : sub {
+                my ( $row, $col, $cell ) = @_;
+                $sheet->{Cells}[$row][$col] = $cell;
+                return;
+            };
+            $self->_parse_sheet( $sheet, $files->{sheets}{$idx},
+                $cellCallback );
             ($sheet);
         }
         else {
@@ -207,7 +212,7 @@ sub _parse_workbook {
 
 sub _parse_sheet {
     my $self = shift;
-    my ( $sheet, $sheet_file ) = @_;
+    my ( $sheet, $sheet_file, $cellCallback ) = @_;
 
     $sheet->{MinRow}    = 0;
     $sheet->{MinCol}    = 0;
@@ -465,7 +470,8 @@ sub _parse_sheet {
                     $cell->{_Value} = $sheet->{_Book}{FmtClass}
                       ->ValFmt( $cell, $sheet->{_Book} );
                     $cells{"$row;$col"} = $cell;
-                    $sheet->{Cells}[$row][$col] = $cell;
+                    return $twig->finish_now
+                      if $cellCallback->( $row, $col, $cell );
                     $col_idx++;
                 }
 
